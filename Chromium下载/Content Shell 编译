@@ -1,0 +1,54 @@
+chromium for android的源码已经上传到142服务器中，大小有18.1GB，包括最新的depot_tools工具包
+下载方式：
+scp box@192.168.162.142:/home/box/Workspace/Public/code/chromium-android_20150415.tar.gz ./
+下载解压后包含如下目录
+chromium
+    |---depot_tools/
+    |---src/
+    |---chromium.gyp_env
+    |---...
+
+配置depot_tools环境变量：(如果之前已经下过depot_tools，并配置过环境变量可忽略此步骤)
+PATH="$PATH":~/chromium/depot_tools
+
+进入chromium目录下,执行如下命令：
+~/chromium$ gclient runhooks
+如果执行不成功可先安装相关依赖：
+执行如下命令：
+~/chromium/src$ sudo build/install_build_deps_android.sh
+
+如果是使用mint17（64位系统）要修改src/build/install_build_deps.sh文件中的如下内容：
+ubuntu_codenames="(precise|trusty|utopic)"
+if [ 0 -eq "${do_unsupported-0}" ] && [ 0 -eq "${do_quick_check-0}" ] ; then
+  if [[ ! $lsb_release =~ $ubuntu_codenames ]]; then
+    echo "ERROR: Only Ubuntu 12.04 (precise), 14.04 (trusty) and " \
+        "14.10 (utopic) are currently supported" >&2
+    exit 1
+  fi
+为：
+ubuntu_codenames="(precise|trusty|utopic)"
+if [ 0 -eq "${do_unsupported-0}" ] && [ 0 -eq "${do_quick_check-0}" ] ; then
+  #if [[ ! $lsb_release =~ $ubuntu_codenames ]]; then
+    #echo "ERROR: Only Ubuntu 12.04 (precise), 14.04 (trusty) and " \
+    #    "14.10 (utopic) are currently supported" >&2
+    #exit 1
+  #fi
+
+之后在执行上面的
+~/chromium/src$ sudo build/install_build_deps_android.sh
+~/chromium$ gclient runhooks （或gclient sync）   //注意执行的目录，要在chromium的目录下执行
+~/chromium/src$ ninja -C out/Release content_shell_apk 
+
+目前能够编译了，我是在mint17 系统上，正在编译....， 
+
+
+成功编译出来了，可以安装到手机上运行。
+编译出来的apk文件位于：src/out/Release/apks/ContentShell.apk
+具体的编译说明参照：
+https://code.google.com/p/chromium/wiki/AndroidBuildInstructions
+
+
+修改host文件，查找IP网址：
+http://www.host-tracker.com/
+http://www.super-ping.com/
+https://cloudmonitor.ca.com/zh_cn/ping.php
