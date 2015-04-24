@@ -1,0 +1,98 @@
+chromium for android render进程的创建过程
+render进程的创建是由应用程序调用ContentView.java的loadUrl开始触发的。
+ContentView.java的loadUrl调用ContentViewCore.java的loadUrl,
+ContentViewCore.java调用nativeLoadUrl()，通过chromium的jni机制
+ContentViewCore_jni.h（定义在out/Release/gen/content/jni）
+最终调用到native层的content_view_core_impl.cc的loadUrl.
+下面的顺序图是从content_view_core_impl.cc的loadUrl开始的触发render进程创建的整个过程：
+
+
+ChildProcessLauncher.java中的方法是供底层调用，用于启动和停止ChildProcess的。
+ChildProcessLauncher.java的warmUp方法完成子进程孵化准备工作，即创建ChildProcessConnection。
+warmUp应该在应用程序启动的早期调用，这样子进程的孵化准备工作就可以和其他启动工作并行进行。 
+warmUp一定不能在UI线程中调用。 
+ChildProcessConnection实现了接口ServiceConnection,用来监测应用程序的子进程的状态。
+ChildProcessLauncher.java有一个内部类ChildConnectionAllocator，负责ChildProcessConnection的创建和销毁。
+render进程是应用程序的子进程，以service的形式提供给应用程序。
+需要在应用程序的AndroidMenifest.xml中声明render进程中运行的service。
+声明方式如下：
+<service android:name="org.chromium.content.app.SandboxedProcessService0" android:permission="com.letv.android.apps.chromeletv.permission.SANDBOX" android:exported="false" 
+android:process=":sandboxed_process0" android:isolatedProcess="true" />
+        <service android:name="org.chromium.content.app.SandboxedProcessService1" android:permission="com.letv.android.apps.chromeletv.permission.SANDBOX" android:exported="false" android:process=":sandboxed_process1" android:isolatedProcess="true" />
+sandboxservice图：
+
+下面的顺序图是应用程序调用warmUp触发的ChildProcessService的创建过程：
+renderprocesscreatefirst图
+
+注意：warmUp在应用程序中只调用一次，所以只有SandboxedProcessService0的创建过程是由warmUp触发的，并且ChildProcessService的onCreate方法中并没有触发到底层process的创建，
+即ChildProcessService的onCreate()没有执行到ContentMain.initApplicationContext，就被阻塞了。
+render进程的更通用的创建方式是由native层的ChildProcessLauncher(定义在child_process_launcher.cc中)回调java层的ChildProcessLauncher的Start方法触发的。
+
+RenderProcessHost* SiteInstanceImpl::GetProcess()会创建RenderProcessHost
+
+WebContentsImpl::CreateRenderViewForRenderManager()
+调用RenderViewHostImpl::CreateRenderView()
+{
+if (!GetProcess()->Init())
+}
+RenderViewHostImpl继承自RenderWidgetHostImpl。RenderWidgetHostImpl中定义了GetProcess()返回RenderProcessHost。
+RenderProcessHostImpl::Init方法创建了RendererMainThread,也创建了ChildProcessLauncher。
+{ 
+child_process_launcher_.reset(new ChildProcessLauncher(
+}
+ChildProcessLauncher定义了一个内部的私有类Context。
+ChildProcessLauncher的构造函数创建了ChildProcessLauncher::Context的一个实例，并调用launch.
+launch调用  BrowserThread::PostTask，
+这个调用会导致调用Context::LaunchInternal。
+Context::LaunchInternal调用一个全局函数StartChildProcess。
+全局函数StartChildProcess定义在child_process_launcher_android.cc中。
+StartChildProcess(){
+Java_ChildProcessLauncher_start(env,
+      base::android::GetApplicationContext(),
+      j_argv.obj(),
+      j_file_ids.obj(),
+      j_file_fds.obj(),
+      j_file_auto_close.obj(),
+      reinterpret_cast<jint>(new StartChildProcessCallback(callback)));
+}
+
+Java_ChildProcessLauncher_start定义在out/Release/gen/content/jni/ChildProcessLauncher_jni.h
+Java_ChildProcessLauncher_start回调了java层ChildProcessLauncher.start函数。
+ChildProcessLauncher.start函数在第一次调用时，由于SandboxedProcessService0已经创建，并阻塞在ChildProcessService的onCreate方法中，所以
+ChildProcessLauncher.start使ChildProcessService的onCreate方法继续执行如下片段：
+{
+ ContentMain.initApplicationContext(sContext.get().getApplicationContext());
+ nativeInitChildProcess(sContext.get().getApplicationContext(),ChildProcessService.this, fileIds, fileFds,mCpuCount, mCpuFeatures);
+ ContentMain.start();
+ nativeExitChildProcess();
+}
+在创建第二个Tab时，SandboxedProcessService1的创建是由以下调用触发的，
+ChildProcessLauncher.start函数调用allocateBoundConnection，
+allocateBoundConnection调用allocateConnection生成一个ChildProcessConnection实例。
+allocateBoundConnection调用新生成的ChildProcessConnection的bind方法，
+ChildProcessConnection的bind调用Context::bindService()，bindService触发SandboxedProcessService1的onCreate方法。
+SandboxedProcessService1是ChildProcessService的基类，从ChildProcessService继承onCreate方法。所以实际执行的是
+ChildProcessService::onCreate。
+目前最多只能创建三个render进程。
+
+接下来的流程与Browser进程的创建过程一样，直到函数ChromeMainDelegateAndroid::RunProcess(
+    const std::string& process_type,
+    const content::MainFunctionParams& main_function_params) {
+  TRACE_EVENT0("startup", "ChromeMainDelegateAndroid::RunProcess")
+  if (process_type.empty()) { //创建Browser进程
+    JNIEnv* env = base::android::AttachCurrentThread();
+    RegisterApplicationNativeMethods(env);
+
+    browser_runner_.reset(content::BrowserMainRunner::Create());
+    return browser_runner_->Initialize(main_function_params);
+  }
+  //创建非Browser进程，比如Render进程 
+  return ChromeMainDelegate::RunProcess(process_type, main_function_params);
+}
+android平台的ChromeMainDelegate::RunProcess返回-1.所以render进程执行RunNamedProcessTypeMain()走的流程是：
+return kMainFunctions[i].function(main_function_params);进而调用RenderMain()，RenderMain定义在Render_main.cc中.
+====================================================== end of render进程的创建过程分析==============================================================================
+
+
+
+

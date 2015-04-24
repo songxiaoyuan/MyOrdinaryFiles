@@ -1,0 +1,320 @@
+android版chromium Browser进程结构分析
+java层与页面显示有关的类
+ContentView.java 
+功能：ContentViewCore.java的封装类，继承自Android的FrameLayout控件，提供了类似于Android WebView.java的接口。
+是android版chrome应用程序可以直接使用的类。
+ContentViewCore.java
+功能：native层WebContent在java端的封装类。包含管理ContentView生命周期所需要的主要功能。
+ContentViewRenderView.java
+功能：封装了SurfaceView.java,继承自Android的FrameLayout控件，ContentView使用ContentViewRenderView来渲染自身内容。
+是android版chrome应用程序可以直接使用的类。
+ContentViewRenderView.java中包含的SurfaceView在ContentViewRenderView的构造函数中通过addView操作成为ContentViewRenderView的子View.
+从而加入到android的view系统中。
+ContentViewRenderView.java的native层ContentViewRenderView
+ContentViewRenderView继承Compositor::Client.
+ContentViewCore.java的native层ContentViewCoreImpl
+ContentViewCoreImpl继承ContentViewCore,NotificationObserver.
+上述类之间的关系如下：
+browser_java.jpg
+
+ContentViewCoreImpl直接调用content/browser/web_contents模块的功能，
+content/browser/web_contents模块直接调用content/browser/renderer_host/模块的功能。
+web_contents和renderer_host模块中的内容构成了Brower进程的主要结构。
+http://blog.csdn.net/jaylinzhou/article/details/9031495
+ContentViewRenderView继承了Compositor::Client，所以ContentViewRenderView是Browser进程中Compositor(android平台定义在compositor_impl_android.cc中)的客户端。
+负责创建Compositor,为Compositor设置Surface，调用Compositor的合成动作等。Compositor是位于Browser进程中的合成器，负责合成已经渲染好的各层网页内容。
+这篇博客中我们只关注Browser进程中与页面渲染相关的结构。
+沿着ContentViewCoreImpl这个类，可以理清Browser进程中web_contents模块和renderer_host模块的关系以及两者各自的内部结构。
+沿着ContentViewRenderView这个类，可以理清Browser进程中Compositor模块的工作机制，
+后面的内容分两个部分：
+一.ContentViewCoreImpl引出的web_contents模块，renderer_host模块的内部结构，以及两者之间的联系。
+二.ContentViewRenderView引出的Compositor模块的内部结构。(android平台的compositor定义在compositor_impl_android.cc中)。
+下面我们分别介绍这两部分。
+先分析第一部分。
+一.ContentViewCoreImpl引出的web_contents模块，renderer_host模块的内部结构，以及两者之间的联系。
+ContentViewCoreImpl包含两个重要的成员变量WebContentsImpl* web_contents_和scoped_refptr<cc::Layer> root_layer_。
+WebContentsImpl是web_contents模块的核心类。
+cc::Layer是合成各个已渲染好的网页时需要用的composited layer.
+下面我们看ContentViewCoreImpl中包含的WebContentsImpl* web_contents_是怎么创建的。
+java层的ContentViewUtil类提供了一个接口可以创建native层WebContents.
+ContentViewUtil.createNativeWebContents();
+这个调用通过jni调用到native层的CreateNativeWebContents()(定义在content_view_util.cc中).
+CreateNativeWebContents()调用content::WebContents::Create(),
+content::WebContents::Create()的实现在web_contents_impl.cc中，具体创建的是WebContents的实现类WebContentsImpl。
+所以java层ContentViewUtil.createNativeWebContents()接口创建了一个native层WebContentsImpl实例。
+在java层的chrome应用程序中，这个实例通过ContentView.newInstance()传递给java层ContentView的构造函数。
+java层ContentView的构造函数中创建了ContentViewCore的实例，并调用ContentViewCore.initialize(),将native层的WebContentsImpl实例传递给了
+java层的ContentViewCore.
+ContentViewCore::initialize(){
+ mNativeContentViewCore = nativeInit(mHardwareAccelerated,
+                nativeWebContents, viewAndroidNativePointer, windowNativePointer);
+}
+nativeInit()实际调用的是content_view_core_impl.cc中的Init()函数。
+Init()函数中以native层WebContentsImpl实例为参数创建了ContentViewCoreImpl实例。
+所以ContentViewCoreImpl中包含的WebContentsImpl* web_contents_实际指向的就是java层ContentViewUtil.createNativeWebContents()创建的native层WebContentsImpl实例。
+
+ContentViewCoreImpl的构造函数初始化列表中调用cc::Layer::Create()初始化了scoped_refptr<cc::Layer> root_layer_。
+所以ContentViewCoreImpl中的root_layer_指向的是cc::Layer的实例。
+
+下面我们看WebContentsImpl的内部结构。
+我们看WebContentsImpl中包含的三个成员变量：
+scoped_ptr<WebContentsViewPort> view_；
+RenderViewHostDelegateView* render_view_host_delegate_view_;
+RenderViewHostManager render_manager_；
+view_和render_view_host_delegate_view_实际指向的都是WebContentsViewAndroid的实例。
+WebContentsViewAndroid继承了WebContentsViewPort和RenderViewHostDelegateView。
+WebContentsImpl::Init()函数创建了WebContentsViewAndroid实例，对view_和render_view_host_delegate_view_赋值。
+WebContentsImpl::Init(){
+  view_.reset(CreateWebContentsView(
+          this, delegate, &render_view_host_delegate_view_));
+}
+android平台的CreateWebContentsView()定义在web_contents_view_android.cc中，创建的是WebContentsViewAndroid实例。
+WebContentsViewAndroid包含指向WebContentsImpl和ContentViewCoreImpl的指针变量。
+其中，WebContentsImpl指针变量是WebContentsImpl::Init()函数创建WebContentsViewAndroid实例时将自身作为参数传入的。
+ContentViewCoreImpl指针变量是ContentViewCoreImpl的构造函数调用ContentViewCoreImpl::InitWebContents()时将自身作为参数通过调用<WebContentsViewAndroid::SetContentViewCore()传入的。
+ContentViewCoreImpl::InitWebContents(){
+ static_cast<WebContentsViewAndroid*>(web_contents_->GetView())->
+      SetContentViewCore(this);
+}
+WebContentsImpl的构造函数初始化列表中创建了RenderViewHostManager实例。
+RenderViewHostManager类为WebContentsImpl管理RenderViewHosts。是WebContentsImpl调用renderer_host模块的桥梁。
+RenderViewHostManager类中包含renderer_host模块的核心类RenderViewHostImpl* render_view_host_。
+RenderViewHostImpl继承了RenderWidgetHostImpl.
+RenderWidgetHost包含一个重要的成员变量RenderWidgetHostViewPort* view_。
+RenderWidgetHostView接口代表RenderWidgetHost的View部分，
+RenderWidgetHost以及与它相关联的RenderProcessHost维护Model部分，即子renderer进程。
+RenderWidgetHostView负责从周围环境接收事件，并将事件传递给RenderWidgetHost。
+当RenderWidgetHost的内容发生变化时，RenderWidgetHostView负责实际显示这些内容。
+RenderWidgetHostView 类层次结构:
+RenderWidgetHostView - 公共接口.
+RenderWidgetHostViewPort - 专门针对content/ 和 ports的私有接口.
+RenderWidgetHostViewBase - 各平台通用的实现.
+RenderWidgetHostViewWin, ... - 平台相关的实现。
+RenderWidgetHostView的android平台实现类是RenderWidgetHostViewAndroid。这个类是与网页合成相关的一个非常重要的类。
+RenderWidgetHostViewAndroid包含的与网页合成相关的成员变量：
+ContentViewCoreImpl* content_view_core_;
+scoped_refptr<cc::TextureLayer> texture_layer_;
+scoped_refptr<cc::Layer> layer_；
+texture_layer_是合成器最终合成网页的各个层时需要用到的composited layer.
+先看ContentViewCoreImpl* content_view_core_的具体指向。
+前面讲过WebContentsViewAndroid包含指向ContentViewCoreImpl的指针变量，这个指针变量是通过如下调用传入的：
+ContentViewCoreImpl::InitWebContents(){
+ static_cast<WebContentsViewAndroid*>(web_contents_->GetView())->
+      SetContentViewCore(this);
+}
+接着看WebContentsViewAndroid::SetContentViewCore()
+{
+ RenderWidgetHostViewAndroid* rwhv = static_cast<RenderWidgetHostViewAndroid*>(
+      web_contents_->GetRenderWidgetHostView());
+  if (rwhv)
+    rwhv->SetContentViewCore(content_view_core_);
+}
+RenderWidgetHostViewAndroid::SetContentViewCore()将传入的ContentViewCoreImpl*指针变量保存在自己的成员变量ContentViewCoreImpl* content_view_core_中。
+RenderWidgetHostViewAndroid的构造函数中调用cc::TextureLayer::Create()创建了TextureLayer的实例，并保存到成员变量scoped_refptr<cc::TextureLayer> texture_layer_中。
+TextureLayer是Layer的具体子类，成员变量scoped_refptr<cc::Layer> layer_与scoped_refptr<cc::TextureLayer> texture_layer_指向同一实例。
+RenderWidgetHostViewAndroid用到了ImageTransportFactoryAndroid的具体实现类（DirectGLImageTransportFactory或CmdBufferImageTransportFactory）来管理texture和合成同步。
+ImageTransportFactoryAndroid的具体实现类CmdBufferImageTransportFactory封装了WebGraphicsContext3DCommandBufferImpl。
+CmdBufferImageTransportFactory::CmdBufferImageTransportFactory()的构造函数中创建了WebGraphicsContext3DCommandBufferImpl的实例，surface_id参数为0，代表offscreen.(不清楚的地方)
+WebGraphicsContext3DCommandBufferImpl是与GPU进程通信的类。
+下面这个关系是理解Browser进程中合成器工作原理的关键：
+RenderWidgetHostViewAndroid的scoped_refptr<cc::TextureLayer> texture_layer_是ContentViewCoreImpl的成员变量scoped_refptr<cc::Layer> root_layer_的子Layer.
+这个关系的建立在RenderWidgetHostViewAndroid::SetContentViewCore()函数中。
+RenderWidgetHostViewAndroid::SetContentViewCore()调用AttachLayers()。
+RenderWidgetHostViewAndroid::AttachLayers()调用ContentViewCoreImpl::AttachLayer().
+ContentViewCoreImpl::AttachLayer(){
+ root_layer_->AddChild(layer);
+} 
+这样，RenderWidgetHostViewAndroid的scoped_refptr<cc::TextureLayer> texture_layer_就关联到了ContentViewCoreImpl的成员变量scoped_refptr<cc::Layer> root_layer_为根节点的cc::Layer树上。
+上述类之间的关系如下图：
+browser_contentviewcoreimpl.jpg
+
+这里与网页合成密切相关的类是RenderWidgetHostViewAndroid，以及以ContentViewCoreImpl的成员变量scoped_refptr<cc::Layer> root_layer_为根节点的cc::Layer树结构。
+这两个类会在分析Browser进程的CompCompositor工作原理时频繁用到。
+接下来分析第二部分。
+二.ContentViewRenderView引出的Compositor模块的内部结构(android平台的compositor定义在compositor_impl_android.cc中)。
+ContentViewRenderView包含一个重要的成员变量 scoped_ptr<content::Compositor> compositor_。
+先看这个成员变量的初始化过程：
+java层ContentViewRenderView包含的SurfaceView调用
+mSurfaceView.getHolder().addCallback(mSurfaceCallback)添加了一组回调接口。
+其中surfaceCreated()回调接口的实现调用了ContentViewRenderView的native方法nativeSurfaceCreated(),并将SurfaceView对应的Surface传递给了native层的ContentViewRenderView::SurfaceCreated().
+android的Surface类对应一块被屏幕合成器管理的raw buffer.
+native层的ContentViewRenderView::SurfaceCreated()调用
+ContentViewRenderView::InitCompositor(){
+ if (!compositor_)
+   compositor_.reset(Compositor::Create(this));
+}
+android平台的Compositor::Create()实现在compositor_impl_android.cc中。
+Compositor::Create()创建了CompositorImpl的实例。
+ContentViewRenderView::SurfaceCreated()在调用InitCompositor()创建了CompositorImpl后，
+接着调用compositor_->SetSurface(jsurface)将android系统中的Surface类实例传递给CompositorImpl。
+CompositorImpl包含以下成员变量：
+ANativeWindow* window_; 
+int surface_id_；
+scoped_refptr<cc::Layer> root_layer_;
+scoped_ptr<cc::LayerTreeHost> host_;
+先看ANativeWindow* window_的具体指向以及surface_id_的含义。
+前面讲过ContentViewRenderView::SurfaceCreated()会调用compositor_->SetSurface(jsurface)将android系统中的Surface类实例传递给CompositorImpl。
+CompositorImpl::SetSurface(){
+window = ANativeWindow_fromSurface(env, surface);
+ if (surface)
+    window = ANativeWindow_fromSurface(env, surface);
+  if (window) {
+    SetWindowSurface(window);
+     ......
+  }
+}
+即CompositorImpl::SetSurface()通过android系统中的Surface类实例得到ANativeWindow，并将这个ANativeWindow传递给SetWindowSurface()函数。
+CompositorImpl::SetWindowSurface()将传递进来的ANativeWindow实例保存在自己的成员变量ANativeWindow* window_中，
+CompositorImpl::SetWindowSurface()调用 
+surface_id_ = tracker->AddSurfaceForNativeWidget(window);
+注册ANativeWindow到GpuSurfaceTracker，同时将GpuSurfaceTracker中产生的标识该ANativeWindow的surface_id保存到surface_id_中。
+先看GpuSurfaceTracker的用途和结构。
+GpuSurfaceTracker负责管理暴露给GPU进程使用的rendering surfaces.每个rendering surface都要在GpuSurfaceTracker中注册，并获得一个ID.
+所有发给GPU进程的调用和从GPU进程发出的调用(除了CreateViewCommandBuffer)都通过rendering surface的ID来标识这个rendering surface.
+GpuSurfaceTracker是线程安全的。
+GpuSurfaceTracker通过一个内部结构SurfaceInfo来记录rendering surface的信息.每个rendering surface都由一个唯一的surface_id来标识。
+surface_id和rendering surface组成一个键值对存储在map结构SurfaceMap中。
+注册到GpuSurfaceTracker中的rendering surface分为两种：
+一种由render进程控制GPU进程使用，渲染网页内容的各个层需要用到的rendering surface,这种surface对应的SurfaceInfo要包含如下信息：
+renderer_id：使用该rendering surface的render进程ID;
+renderer_widget_id:使用该rendering surface的render进程对应的Browser进程中的RenderWidgetHost的route id。
+这种rendering surface我们在介绍render进程的内部结构时再详细介绍。
+另一种rendering surface就是这里介绍的,由本地窗口系统提供的一块raw buffer(android平台由ANativeWindow标识)，
+由Browser进程的合成器注册并控制使用，是已经渲染好网页内容的各层rendering surface最终合成的目的地。
+这种surface对应的SurfaceInfo要包含gfx::AcceleratedWidget信息，gfx::AcceleratedWidget是本地窗口系统提供给合成器的，用来绘制像素的rendering surface.
+android平台是ANativeWindow实例。
+不需要render_id和render_widget_id信息，所以都置为0. 
+所以CompositorImpl中的ANativeWindow* window_代表android平台的窗口系统管理的一块raw buffer,是browser进程的合成器控制gpu进程使用的rendering surface,是网页内容最终合成的目的地；
+CompositorImpl中的int surface_id_用来唯一标识ANativeWindow* window_。
+CompositorImpl::CreateOutputSurface()中将surface_id_作为参数创建了WebGraphicsContext3DCommandBufferImpl的实例，
+并以WebGraphicsContext3DCommandBufferImpl的实例为参数创建了cc::OutputSurface的实例，这个cc::OutputSurface的实例最终被传给了GLRenderer.
+(这里以WebGraphicsContext3DCommandBufferImpl为参数创建的WebGraphicsContext3DCommandBufferImpl与RenderWidgetHostViewAndroid用到了ImageTransportFactoryAndroid的具体实现类
+CmdBufferImageTransportFactory::CmdBufferImageTransportFactory()的构造函数中创建了WebGraphicsContext3DCommandBufferImpl的实例之间的关系，是不清楚的地方)
+接下来看scoped_refptr<cc::Layer> root_layer_的具体指向。
+java层ContentViewRenderView::setCurrentContentView()
+通过JNI调用到native层ContentViewRenderView::SetCurrentContentView()，调用
+CompositorImpl::SetRootLayer(),同时将ContentViewCoreImpl::GetLayer()作为参数传入。
+CompositorImpl::SetRootLayer(){
+root_layer_->RemoveAllChildren();
+root_layer_->AddChild(root_layer);
+}
+所以我们知道了，第一部分中分析的ContentViewCoreImpl的成员变量scoped_refptr<cc::Layer> root_layer_为根节点的cc::Layer树传递到了CompositorImpl中，变成了以CompositorImpl中的root_layer_为根节点。
+CompositorImpl::root_layer_包含ContentViewCoreImpl::root_layer_,
+ContentViewCoreImpl::root_layer_包含RenderWidgetHostViewAndroid::texture_layer_.
+这三个cc::Layer组成了以CompositorImpl::root_layer_为根节点的Layer tree.
+接下来看scoped_ptr<cc::LayerTreeHost> host_的具体创建。
+CompositorImpl::SetWindowSurface()调用CompositorImpl::SetVisible().
+CompositorImpl::SetVisible()调用 cc::LayerTreeHost::Create()创建了LayerTreeHost.
+Compositor::InitializeWithFlags()通过DIRECT_CONTEXT_ON_DRAW_THREAD标识，决定是否将合成动作放在单独的线程中。
+接下来看LayerTreeHost的结构。
+scoped_ptr<Proxy> proxy_；
+scoped_refptr<Layer> root_layer_;
+scoped_ptr<PrioritizedResourceManager> contents_texture_manager_;
+scoped_ptr<PrioritizedResource> surface_memory_placeholder_;
+先看proxy_的初始化过程。
+CompositorImpl::SetVisible()调用 cc::LayerTreeHost::Create()创建了LayerTreeHost，并传入一个impl_thread作为参数。
+如果Compositor::InitializeWithFlags()中判断合成动作不放在单独的线程中，则传入cc::LayerTreeHost::Create()的impl_thread为null.
+cc::LayerTreeHost::Create()在创建LayerTreeHost实例后，调用LayerTreeHost::Initialize()同时将CompositorImpl中的impl_thread作为参数传入。
+LayerTreeHost::Initialize()根据传入的impl_thread是否为null，来决定创建SingleThreadProxy还是ThreadProxy。
+先看DIRECT_CONTEXT_ON_DRAW_THREAD 标志没有设置时的情形，此时LayerTreeHost创建的是SingleThreadProxy实例。
+所以scoped_ptr<Proxy> proxy_指向的是SingleThreadProxy实例。
+接着看scoped_refptr<Layer> root_layer_的具体指向。
+CompositorImpl::SetVisible()再调用cc::LayerTreeHost::Create()创建完LayerTreeHost后，调用
+LayerTreeHost::setRootLayer()将CompositorImpl的root_layer_传给LayerTreeHost.
+LayerTreeHost::SetRootLayer()将CompositorImpl的root_layer_保存在自己的root_layer_中。
+所以以CompositorImpl中的root_layer_为根节点的Layer树，传到了LayerTreeHost中，以LayerTreeHost::root_layer_为根节点。
+接着看scoped_ptr<PrioritizedResourceManager> contents_texture_manager_和
+scoped_ptr<PrioritizedResource> surface_memory_placeholder_的创建过程。
+SingleThreadProxy::OnOutputSurfaceInitializeAttempted()调用
+LayerTreeHost::OnCreateAndInitializeOutputSurfaceAttempted(){
+contents_texture_manager_ = PrioritizedResourceManager::Create(proxy_.get());
+surface_memory_placeholder_ = contents_texture_manager_->CreateTexture(gfx::Size(), GL_RGBA);
+}
+PrioritizedResourceManager是管理PrioritizedResource的类，每个PrioritizedResource都会通过PrioritizedResourceManager::RegisterTexture()
+注册给PrioritizedResourceManager。
+PrioritizedResourceManager维护一个base::hash_set<PrioritizedResource*>TextureSet结构，所有注册给PrioritizedResourceManager的PrioritizedResource
+都存储在TextureSet结构中。
+PrioritizedResource有一个重要的内部结构Backing.Backing继承自Resource。Resource由ResourceProvider负责创建。Resource中含有一个重要变量ResourceProvider::ResourceId id_。
+SingleThreadProxy有两个重要的成员变量：
+scoped_ptr<OutputSurface> first_output_surface_;
+scoped_ptr<LayerTreeHostImpl> layer_tree_host_impl_;
+LayerTreeHost::InitializeProxy()先调用CreateOutputSurface().
+LayerTreeHost::CreateOutputSurface()调用
+CompositorImpl::CreateOutputSurface()创建OutputSurface实例。
+LayerTreeHost::InitializeProxy()接着调用proxy_->Start(output_surface.Pass())将新创建的OutputSurface实例传递给SingleThreadProxy.
+前面讲过，
+CompositorImpl::CreateOutputSurface()中将surface_id_作为参数创建了WebGraphicsContext3DCommandBufferImpl的实例，
+并以WebGraphicsContext3DCommandBufferImpl的实例为参数创建了cc::OutputSurface的实例。
+SingleThreadProxy::CreateAndInitializeOutputSurface()调用LayerTreeHostImpl::InitializeRenderer()将CompositorImpl::CreateOutputSurface()创建的OutputSurface传递给了GLRenderer.
+SingleThreadProxy::Start()调用
+LayerTreeHost::CreateLayerTreeHostImpl()
+生成LayerTreeHostImpl实例保存在成员变量scoped_ptr<LayerTreeHostImpl> layer_tree_host_impl_中。
+LayerTreeHostImpl包含如下成员变量：
+scoped_ptr<ResourceProvider> resource_provider_;
+scoped_ptr<TileManager> tile_manager_;
+scoped_ptr<Renderer> renderer_;
+scoped_ptr<LayerTreeImpl> active_tree_;
+LayerTreeHostImpl::InitializeRenderer()中调用ResourceProvider::Create()创建了ResourceProvider,同时将CompositorImpl::CreateOutputSurface()创建的OutputSurface传递给了ResourceProvider.
+CompositorImpl::SetVisible()将cc::LayerTreeSettings::impl_side_painting = false;所以
+LayerTreeHostImpl::InitializeRenderer()没有走下面的分支：
+tile_manager_ = TileManager::Create();
+所以Browser进程中的LayerTreeHostImpl中包含的scoped_ptr<TileManager> tile_manager_为null.
+LayerTreeHostImpl::InitializeRenderer()中调用GLRenderer::Create()创建了GLRenderer,同时将CompositorImpl::CreateOutputSurface()创建的OutputSurface，已经刚刚创建的ResourceProvider传递给
+GLRenderer.GLRenderer继承自DirectRenderer，DirectRenderer包含指向ResourceProvider的指针变量。
+LayerTreeHostImpl的构造函数中调用LayerTreeImpl::create()创建了LayerTreeImpl实例并保存在active_tree_中。
+active_tree_的实际赋值发生在LayerTreeHost::FinishCommitOnImplThread()函数中：
+{ 
+.........
+else{ contents_texture_manager_->ReduceMemory(host_impl->resource_provider());
+    sync_tree = host_impl->active_tree();
+  }
+
+  if (needs_full_tree_sync_)
+    sync_tree->SetRootLayer(TreeSynchronizer::SynchronizeTrees(
+        root_layer(), sync_tree->DetachLayerTree(), sync_tree));
+  {
+    TRACE_EVENT0("cc", "LayerTreeHost::PushProperties");
+    TreeSynchronizer::PushProperties(root_layer(), sync_tree->root_layer());
+  }
+.........
+}
+上述代码将LayerTreeHost的Layer树转变为LayerTreeHostImpl的LayerImpl树。
+
+
+
+第二部分涉及的类图如下：
+browser_contentviewrenderview.jpg
+
+
+
+第二部分总结：
+1.LayerTreeHost的成员变量scoped_refptr<Layer> root_layer_包含RenderWidgetHostViewAndroid的scoped_refptr<cc::TextureLayer> texture_layer_.
+RenderWidgetHostViewAndroid是TextureLayer的Client端。
+2.LayerTreeHostImpl的成员变量scoped_ptr<LayerTreeImpl> active_tree_包含LayerImpl成员变量root_layer_，这里实际是TextureLayerImpl,由1中提到的
+RenderWidgetHostViewAndroid的scoped_refptr<cc::TextureLayer> texture_layer_创建的。 
+3.LayerTreeHost与LayerTreeHostImpl是一一对应的关系，LayerTreeHost运行在主线程中，LayerTreeHostImpl运行在主线程的封装线程中，这两个类通过SingleThreadProxy联系起来。
+LayerTreeHost的成员变量scoped_refptr<Layer> root_layer_与LayerTreeHostImpl的active_tree_的成员变量root_layer_是一一对应的关系。
+LayerTreeHostImpl的active_tree_是由LayerTreeHost的成员变量scoped_refptr<Layer> root_layer_创建出来的。
+4.SingleThreadProxy继承自Proxy,Proxy是抽象类，负责将compositor的主线程命令代理给compositor的具体实现类。这点会在render进程结构分析中详细说明。
+5.LayerTreeHostImpl包含的GLRenderer负责与GPU进程通信，控制具体的合成过程。
+GLRenderer,(DirectRenderer包含的)ResourceProvider(包含OutputSurface)，都会通过OutputSurface中包含的WebGraphicsContext3DCommandBufferImpl与GPU进程通信。
+6.前面讲过OutputSurface中包含的WebGraphicsContext3DCommandBufferImpl在创建时需要surface_id作为参数，这个surface_id是GPU进程使用的，由本地窗口系统提供的一块raw buffer,
+在android平台是AnativeWindow.
+7.browser进程需要与GPU进程通信，所以browser进程会创建GPUChannelHost的实例。在讲GPU进程结构时会详细说明。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

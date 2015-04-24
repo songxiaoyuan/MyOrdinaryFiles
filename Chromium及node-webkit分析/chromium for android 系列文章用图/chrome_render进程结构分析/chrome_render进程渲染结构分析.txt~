@@ -1,0 +1,266 @@
+chromium for android render进程结构分析
+一.首先看Render进程中的核心类RenderWidget,RenderView(Impl)与WebKit模块之间关系的建立
+RendeWidget与WebKit::WebWidget,RenderView(Impl)与WebKit::WebView(Impl)之间的关系
+RenderWidget类是WebKit::WebWidget和RenderWidgetHost之间的通信桥梁。
+RenderWidgetHost运行在Browser进程中。
+RenderView用来管理WebView,并为内嵌的应用提供通信接口。
+RenderWidget包含一个WebKit::WebWidget*类型的成员变量webwidget_。
+通过RenderWidget的静态函数Create直接创建RenderWidget的实例时，才会导致WebKit::WebWidget实例的成员变量webwidget_的创建.
+RenderViewImpl是RenderWidget的子类同时也是RenderView的实现子类，创建RenderViewImpl实例导致RenderWidget实例被创建时，RenderWidget中不会创建WebKit::WebWidget。
+RenderViewImpl::Create()函数中创建了RenderViewImpl，并调用了RenderViewImpl::Initialize().
+RenderViewImpl::Initialize()函数中调用webwidget_ = WebView::create(this)创建了WebViewImpl的实例，并保存在RenderWidget中定义的变量webwidget_中。
+以上分析，我们可以得到以下结论：
+RenderWidget对应于WebKit::WebWidget;
+RenderViewImpl对应于WebKit::WebViewImpl(WebKit::WebView的实现子类);
+只有创建RenderWidget实例时，才会导致WebKit::WebWidget的具体子类实例的创建；
+创建RenderViewImpl实例时，会导致WebKit::WebViewImpl(WebKit::WebView的实现子类)实例的创建；
+RenderWidget继承自WebKit::WebWidgetClient，在创建WebKit::WebWidget的具体子类实例时，RenderWidget将自身作为参数传给WebKit::WebWidget的具体子类。
+RenderViewImpl继承自WebKit::WebViewClient，在创建WebKit::WebViewImpl时，RenderViewImpl将自身作为参数传给WebKit::WebViewImpl.
+WebKit::WebWidget的三个子类WebKit::WebPopupMenu, WebKit::WebPagePopup, WebKit::WebPopupTypeHelperPlugin都包含一个成员变量WebWidgetClient* m_widgetClient，实际指向RenderWidget. 
+WebKit::WebViewImpl中包含一个成员变量WebViewClient* m_client，这个成员变量指向RenderViewImpl.
+这样， RenderWidget包含WebKit::WebWidget的指针变量，WebKit::WebWidget也包含RenderWidget的指针变量，两者可以双向通信了。
+同理，RenderViewImpl包含WebKit::WebViewImpl的指针变量，WebKit::WebViewImpl也包含RenderViewImpl的指针变量，两者也可以双向通信了。
+类关系图：
+chrome_render_widget.jpg
+chrome_render_view.jpg
+WebKit::WebWidgetClient中提供的接口都与事件处理，窗口渲染相关。
+WebKit::WebViewClient中提供的接口都是与界面行为相关的，如Session,zoom,Accessibility,Geolocation,Speech等。
+
+二.接着看WebKit中与网页渲染相关的类结构
+WebKit中负责网页内容渲染的主要类如下：
+RenderView：
+RenderView是RenderTree同时也是RenderLayerTree的根节点，渲染网页内容需要遍历RenderLayerTree.遍历过程是由RenderLayerTree的根结点RenderView触发的。
+一个RenderView对应一个RenderLayerCompositor。
+RenderLayerCompositor:
+RenderLayerCompositor管理需要合成的RenderLayer层次结构，决定需要硬件合成的RenderLayer(compositing layer),基于RenderLayer的绘制顺序，创建并维护一个GraphicsLayer层次结构。
+RenderLayer：
+RenderLayer类包含需要显示的网页内容信息，硬件合成的情况下，每个RenderLayer包含的网页内容的绘制命令会先被存储在RenderLayerBacking包含的一块后端存储(SKCanvas)上.
+这块包含网页某一层绘制命令的SKCanvas,会在Render进程的RenderWidgetCompositor控制下，通过调用GPU进程的gles命令绘制到一块raw buffer上，
+代表每层render layer内容的raw buffer.最终会在Browser进程的合成器控制下，合成为最终的网页内容，显示在屏幕上。完整的硬件渲染流程会专门说明。
+硬件渲染情况下一个RenderLayer对应一个RenderLayerBacking。
+RenderLayerBacking:
+RenderLayerBacking管理和控制RenderLayer的合成行为，包含很多GraphicsLayer对象,用来决定Layer内部的优化。GraphicsLayer是RenderLayerBacking的后端存储。
+RenderLayer包含的网页内容的绘制命令就是存储到这里的GraphicsLayer中。
+GraphicsLayer:
+GraphicsLayer是拥有后端存储的rendering surface及其相应的变换和动画。GraphicsLayer通过一系列的中间layer最终间接包含cc::PictureLayer.
+cc::PictureLayer才是GraphicsLayer的后端存储，也就是网页内容的绘制命令的存储地。参考硬件渲染流程分析。
+以上各类的关系如下：
+webkit_renderlayercompositor.jpg
+
+RenderLayerBacking中包含的GraphicsLayer是理解网页渲染的重要类，我们看RenderLayerBacking创建GraphicsLayer的过程：
+下面是调用流程：
+FrameView::layout()调用了
+FrameView::updateCompositingLayersAfterLayout()调用了
+RenderLayerCompositor::updateCompositingLayers()调用了
+RenderLayerCompositor::computeCompositingRequirements()调用了
+RenderLayerCompositor::updateBacking()中调用了
+RenderLayer::ensureBacking()中创建了RenderLayerBacking的实例
+RenderLayerBacking的构造函数中调用了
+RenderLayerBacking::createPrimaryGraphicsLayer()
+调用RenderLayerBacking::createGraphicsLayer()。
+GraphicsLayer的创建会导致一系列Layer的创建，我们看GraphicsLayer的构造函数：
+GraphicsLayer(){
+ m_opaqueRectTrackingContentLayerDelegate = adoptPtr(new OpaqueRectTrackingContentLayerDelegate(this));
+ m_layer = adoptPtr(Platform::current()->compositorSupport()->createContentLayer(m_opaqueRectTrackingContentLayerDelegate.get()));
+}
+GraphicsLayer创建的顺序图如下：
+graphicsLayercreated.jpg
+
+由此，我们可以得到以下结论：
+WebKit::GraphicsLayer包含WebKit::WebContentLayerImpl,保存在成员变量OwnPtr<WebKit::WebContentLayer> m_layer中；
+WebKit::WebContentLayerImpl包含WebKit::WebLayerImpl,保存在成员变量scoped_ptr<WebLayerImpl> layer_中；
+WebKit::WebLayerImpl包含cc::PictureLayer,保存在成员变量scoped_refptr<cc::Layer> layer_中；
+
+RenderLayerBacking中创建的GraphicsLayer实例会被attach到RenderLayerCompositor的成员变量OwnPtr<GraphicsLayer> m_rootContentLayer上,具体过程如下：
+RenderLayerCompositor::updateCompositingLayers()调用了
+RenderLayerCompositor::rebuildCompositingLayerTree().
+rebuildCompositingLayerTree()中将RenderLayerBacking的GraphicsLayer添加到一个Vector<GraphicsLayer*>结构中。
+RenderLayerCompositor::updateCompositingLayers()调用完rebuildCompositingLayerTree()后调用
+m_rootContentLayer->setChildren(childList);
+这样，RenderLayerCompositor的成员变量OwnPtr<GraphicsLayer> m_rootContentLayer中就包含了所有的RenderLayerBacking创建的GraphicsLayer。
+
+三.我们看Render进程中控制网页各层内容渲染的类结构
+LayerTreeHost,ThreadProxy与LayerTreeHostImpl之间的关系
+RenderWidgetCompositor::initialize()中调用LayerTreeHost::Create创建了LayerTreeHost,同时将RenderThreadImpl封装后传给了LayerTreeHost.
+LayerTreeHost::Create()，
+调用了LayerTreeHost::Initialize()。
+LayerTreeHost::Initialize()中可知，RenderWidgetCompositor包含的LayerTreeHost中创建的是ThreadProxy的实例。
+Proxy是抽象类，负责将compositor的主线程命令代理给compositor的具体实现类。
+class CC_EXPORT Proxy包含两个主要的成员变量：
+scoped_ptr<Thread> main_thread_;
+scoped_ptr<Thread> impl_thread_;
+Proxy对象的构造函数会调用ThreadImpl::CreateForCurrentThread()初始化main_thread_,main_thread_代表当前线程。根据传入的Thread参数来初始化impl_thread_。
+ThreadProxy的构造函数包含一个有效的Thread参数，它的基类Proxy用这个Thread类型的参数初始化impl_thread_，所以ThreadProxy拥有两个线程实例main_thread_和impl_thread_。
+SingleThreadProxy的构造函数将一个Null传给它的基类Proxy的构造函数，所以SingleThreadProxy只包含当前线程的一个封装类main_thread_，这也是其名字的由来。
+SingleThreadProxy和ThreadProxy都含有以下对象成员变量：
+LayerTreeHost* layer_tree_host_;
+scoped_ptr<LayerTreeHostImpl> layer_tree_host_impl_;
+SingleThreadProxy::Start函数中调用LayerTreeHost::CreateLayerTreeHostImpl创建LayerTreeHostImpl并将其保存在 layer_tree_host_impl_中。
+ThreadProxy::InitializeImplOnImplThread调用LayerTreeHost::CreateLayerTreeHostImpl创建LayerTreeHostImpl并将其保存在 layer_tree_host_impl_中。
+SingleThreadProxy和ThreadProxy持有LayerTreeHostImpl，并继承了LayerTreeHostImplClient，在构建LayerTreeHostImpl的同时将自身传给了LayerTreeHostImpl的构造函数。
+SingleThreadProxy和ThreadProxy是LayerTeeHost和LayerTreeHostImpl相互协作的桥梁。
+ThreadProxy中的函数，一部分是在主线程中执行，一部分是在impl 线程中执行。对于RenderWidgetCompositor包含的LayerTreeHost中创建的是ThreadProxy的实例,impl线程是RenderThreadImpl的实例。
+ThreadProxy中在impl线程中执行的函数带有OnImplThread后缀。
+ThreadProxy还含有以下成员变量：
+scoped_ptr<Scheduler> scheduler_on_impl_thread_;
+这个变量的作用是调度impl线程中执行的动作。
+ThreadProxy中调用scheduler_on_impl_thread_的接口，
+scheduler_on_impl_thread_的接口调用scheduler_on_impl_thread_的ProcessScheduledActions()函数，
+ProcessScheduledActions()最终又调回到ThreadProxy中ScheduledAction开头的函数。
+ThreadProxy::InitializeImplOnImplThread()中调用LayerTreeHost::CreateLayerTreeHostImpl()创建了LayerTreeHostImpl.
+LayerTreeHostImpl只在ThreadProxy的impl线程中调用。
+这部分结构与browser进程中compositor部分类似。
+render进程中的渲染完成的是包含网页内容的各个层的渲染。
+browser进程中compositor部分完成的是将render进程渲染好的各个层合成在一起，并显示在屏幕上。
+
+
+
+
+四.接着看Render进程中控制网页渲染的核心类RenderWidgetCompositor与WebKit模块之间的关系建立
+RenderWidgetCompositor与WebKit::WebViewImpl的关系建立过程
+RenderWidget包含一个成员变量scoped_ptr<RenderWidgetCompositor> compositor_。
+RenderWidgetCompositor继承自WebKit::WebLayerTreeView，负责控制网页各个层的渲染工作。
+WebKit::WebViewImpl中包含一个成员变量WebLayerTreeView* m_layerTreeView，这个成员变量指向RenderWidget中创建的RenderWidgetCompositor实例。
+下面的顺序图是RenderWidget创建RenderWidgetCompositor，以及RenderWidgetCompositor被保存到WebKit::WebViewImpl的成员变量WebLayerTreeView* m_layerTreeView中的过程。
+renderwidgetcompositorcreated.jpg
+
+关键代码如下：
+WebViewImpl::setIsAcceleratedCompositingActive(){
+m_client->initializeLayerTreeView();
+m_layerTreeView = m_client->layerTreeView();
+}
+
+五.Render进程用到的renderering surface的来源
+需要注意的是，render进程中的renderering surface是网页各层内容实际绘制到的frame buffer.
+在此之前网页各层内容的绘制命令会先被记录到PictureLayer包含的一块SKCanvas上，这些绘制命令随后会被转化成gl命令执行，gl命令绘制结果存储在renderer进程的
+renderering surface上，形成每一层的网页内容。各层网页内容会在browser进程的合成器控制下，通过GPU进程合成到browser进程提供的renderering surface上，
+最终形成可视的网页内容。
+在Browser进程结构分析中我们讲过Browser进程中用到的renderering surface是android平台窗口系统提供的ANativeWindow,是通过java层Android::Suface类获得的，
+并注册给了GpuSurfaceTracker，具体实现在CompositorImpl::SetWindowSurface()函数中.
+接下来我们看Render进程用到的renderering surface的来源。
+Render进程中的renderering surface也是由GPU进程直接使用的，所以也需要注册给GpuSurfaceTracker，并由GpuSurfaceTracker生成一个唯一标识该Renderering surface的
+surface_id，这个surface_id返回给render进程，render进程与GPU进程通信时，就通过这个surface_id来标识自己注册的renderering surface.
+所以，我们先看标识这块renderering surface的surface_id的来源。
+这个surface_id是Browser进程中与Render进程的RenderViewImpl相对应的类RenderViewHostImpl的构造函数调用
+GpuSurfaceTracker::Get()->AddSurfaceForRenderer()得到的。
+下面是具体过程：
+RenderWidgetHostImpl的构造函数调用
+surface_id_ = GpuSurfaceTracker::Get()->AddSurfaceForRenderer(process_->GetID(),routing_id_);
+关于GpuSurfaceTracker在browser进程结构分析中有详细介绍。
+render进程注册的renderer surface对应的SurfaceInfo中保存着renderer_id和render_widget_id信息。
+SurfaceInfo的gfx::AcceleratedWidget native_widget变量为空。
+我们看，这里获得的给render进程使用的标识renderering surface的surface_id是怎么传递给render进程的。
+RenderViewHostImpl::CreateRenderView()中给ViewMsg_New_Params params赋值，并以params为参数，调用Send(new ViewMsg_New(params));
+Send(new ViewMsg_New(params))实际调用的是RenderProcessHost中的Send函数，这个函数由Browser进程调用发消息给Render进程。
+所以触发了Render进程中的RenderThreadImpl::OnCreateNewView(const ViewMsg_New_Params& params)创建了RenderViewImpl.
+Browser进程的RenderViewHostImpl::CreateRenderView()调用Send(new ViewMsg_New(params))时，传了一个参数params,这个参数中就包含了surface_id.
+RenderThreadImpl::OnCreateNewView(const ViewMsg_New_Params& params)调用RenderViewImpl::Create()并将surface_id传递给RenderViewImpl::Create()。
+RenderViewImpl::Create()在创建完RenderViewImpl后，调用RenderViewImpl::Initialize(),并将surface_id传递给initialize()函数。
+RenderViewImpl::Initialize()将surface_id保存到它的成员变量surface_id_中，注意这个成员变量的定义在RenderViewImpl的父类RenderWidget中，
+RenderWidget将surface_id_标识为protected，所以RenderViewImpl可以直接访问。
+这样，标识renderering surface的surface_id就传递到了Render进程的RenderWidget中。
+与Browser进程中合成器的情况类似，Render进程中的surface_id也会被封装在WebGraphicsContext3DCommandBufferImpl实例中，
+WebGraphicsContext3DCommandBufferImpl实例又会被封装在OutputSurface实例中。这个OutputSurface实例会被传递给与GPU进程通信的GLRender，同时也会保存在
+ResourceProvider中。
+我们看Render进程的surface_id被间接封装到OutputSurface中的过程。
+ThreadProxy包含一个Scheduler实例，负责调度需要执行的动作。
+Scheduler::ProcessScheduledActions()调用
+ThreadProxy::ScheduledActionBeginOutputSurfaceCreation()调用
+ThreadProxy::CreateAndInitializeOutputSurface()调用
+ThreadProxy::DoCreateAndInitializeOutputSurface()调用
+LayerTreeHost::CreateOutputSurface()调用
+RenderWidgetCompositor::CreateOutputSurface()调用
+RenderWidget::CreateOutputSurface()先调用
+RenderWidget::CreateGraphicsContext3D()生成WebGraphicsContext3DCommandBufferImpl，surface_id作为参数传给了WebGraphicsContext3DCommandBufferImpl的构造函数。
+RenderWidget::CreateOutputSurface()在生成包含surface_id的WebGraphicsContext3DCommandBufferImpl实例后，再以WebGraphicsContext3DCommandBufferImpl实例为参数
+调用MailboxOutputSurface的构造函数生成MailboxOutputSurface的实例。
+这个MailboxOutputSurface的实例最终会通过ThreadProxy::InitializeOutputSurfaceOnImplThread()中调用
+LayerTreeHostImpl::InitializeRenderer()传递给LayerTreeHostImpl。
+LayerTreeHostImpl::InitializeRenderer()中又进一步将这个MailboxOutputSurface的实例传递给了GLRenderer的实例.
+接着我们看这个surface_id标识的renderering surface的创建过程。
+ThreadProxy::DoCreateAndInitializeOutputSurface()调用
+ThreadProxy::InitializeOutputSurfaceOnImplThread()调用
+LayerTreeHostImpl::InitializeRenderer()调用
+MailboxOutputSurface::BindToClient(),这里实际调用的是OutputSurface::BindToClient()。
+OutputSurface::BindToClient()调用
+WebGraphicsContext3DCommandBufferImpl::makeContextCurrent()调用
+WebGraphicsContext3DCommandBufferImpl::MaybeInitializeGL()调用
+WebGraphicsContext3DCommandBufferImpl::CreateContext()调用
+WebGraphicsContext3DCommandBufferImpl::InitializeCommandBuffer()调用
+GpuChannelHost::CreateViewCommandBuffer()
+render进程中是RenderThreadImpl负责生成GpuChannelHost，RenderThreadImpl继承自GpuChannelHostFactory.
+browser进程中是BrowserGpuChannelHostFactory负责生成GpuChannelHost，BrowserGpuChannelHostFactory继承自GpuChannelHostFactory。
+GpuChannelHost封装了客户端与GPU进程通信的IPC通道。
+GPU进程中有一个GpuChannel实例与GpuChannelHost相对应。
+GpuChannelHost::CreateViewCommandBuffer()调用
+RenderThreadImpl::CreateViewCommandBuffer()调用
+ ChildThread::Send(GpuHostMsg_CreateViewCommandBuffer)
+所以,ChildThread::Send(GpuHostMsg_CreateViewCommandBuffer)实际调用的是
+GpuChannel::CreateViewCommandBuffer()。
+GpuChannel::CreateViewCommandBuffer()调用
+GpuCommandBufferStub的构造函数同时传入了surface_id.
+这样surface_id就传入了GPU进程中的GpuCommandBufferStub实例中。
+GpuChannelHost::CreateViewCommandBuffer()在调用完RenderThreadImpl::CreateViewCommandBuffer()后，接着调用
+CommandBufferProxyImpl的构造函数创建CommandBufferProxyImpl实例。
+CommandBufferProxyImpl是GPU的客户端代理，用来将客户端的消息同步转发给GPU进程中的GpuCommandBufferStub。
+WebGraphicsContext3DCommandBufferImpl::InitializeCommandBuffer()生成CommandBufferProxyImpl实例后，调用
+CommandBufferProxyImpl::Initialize(),调用
+Send(new GpuCommandBufferMsg_Initialize(route_id_, handle, &result))；
+前面说过，CommandBufferProxyImpl会将消息同步转发给GPU进程中的CommandBufferStub。
+所以，实际执行的是GpuCommandBufferStub::OnInitialize().
+GpuCommandBufferStub::OnInitialize()调用
+ImageTransportSurface::CreateSurface()并将自身作为参数传入。
+ImageTransportSurface::CreateSurface()中会创建TextureImageTransportSurface的实例，并将GpuCommandBufferStub作为参数传入。
+TextureImageTransportSurface的构造函数中会创建ImageTransportHelper的实例，并将GpuCommandBufferStub作为参数传入。
+TextureImageTransportSurface::GetBackingFrameBufferObject()中会调用 glGenFramebuffersEXT(1, &fbo_id_)生成一块framebuffer,
+这块framebuffer就是render进程中真正的renderering surface.
+
+六.LayeTreeHost的成员变量scoped_refptr<Layer> root_layer_与WebKit中RenderLayerCompositor的成员变量OwnPtr<GraphicsLayer> m_rootContentLayer之间的关系建立
+先给出结论，LayeTreeHost的成员变量scoped_refptr<Layer> root_layer_实际指向的是PictureLayer的实例,这个实例是RenderLayerCompositor的成员变量OwnPtr<GraphicsLayer> m_rootContentLayer创建时创建的，
+被OwnPtr<GraphicsLayer> m_rootContentLayer间接包含。这点是理解render进程中包含网页内容的各个层的绘制过程的关键。
+WebKit::RenderView::compositor()中创建了RenderLayerCompositor,并保存在m_compositor变量中，
+RenderLayerCompositor中有指向创建它的RenderView的成员变量RenderView* m_renderView。 
+RenderLayerCompositor::ensureRootLayer()中创建了用于不同目的的各个GraphicsLayer，其中代表content root的GraphicsLayer中存储了RenderLayer对应的RenderLayerBacking中创建的GraphicsLayer.
+在RenderLayerCompositor::attachRootLayer()中将代表content root的GraphicsLayer传给了ChromeClientImpl,
+并由ChromeClientImpl::attachRootGraphicsLayer()调用WebViewImpl::setRootGraphicsLayer()进一步传递给了WebKit::WebViewImpl。
+所以WebKit::WebViewImpl中的成员变量 WebCore::GraphicsLayer* m_rootGraphicsLayer，保存的是RenderLayerCompositor的成员变量OwnPtr<GraphicsLayer> m_rootContentLayer。
+WebViewImpl::setRootGraphicsLayer()中调用GraphicsLayer::platformLayer()给成员变量WebLayer* m_rootLayer赋值。
+PlatformLayer* GraphicsLayer::platformLayer() const
+{
+    return m_transformLayer ? m_transformLayer.get() : m_layer->layer();
+}
+PlatformLayer.h中有如下定义：
+typedef WebKit::WebLayer PlatformLayer;
+前面讲过，
+WebKit::GraphicsLayer包含WebKit::WebContentLayerImpl,保存在成员变量OwnPtr<WebKit::WebContentLayer> m_layer中；
+WebKit::WebContentLayerImpl包含WebKit::WebLayerImpl,保存在成员变量scoped_ptr<WebLayerImpl> layer_中；
+WebKit::WebLayerImpl包含cc::PictureLayer,保存在成员变量scoped_refptr<cc::Layer> layer_中；
+WebKit::WebContentLayer::layer()返回的是指向WebLayer的指针。
+WebKit::WebContentLayerImpl::layer()返回的是指向WebLayerImpl的指针。
+所以GraphicsLayer::platformLayer()返回的是WebLayerImpl的实例.
+WebViewImpl的成员变量WebLayer* m_rootLayer中保存的是WebLayerImpl的实例。
+WebViewImpl::setIsAcceleratedCompositingActive()中调用了
+m_layerTreeView->setRootLayer(*m_rootLayer);
+实际调用的是RenderWidgetCompositor::setRootLayer(const WebKit::WebLayer& layer){
+layer_tree_host_->SetRootLayer(
+      static_cast<const webkit::WebLayerImpl*>(&layer)->layer());
+}
+RenderWidgetCompositor包含一个成员变量scoped_ptr<cc::LayerTreeHost> layer_tree_host_。
+前面讲过，WebLayerImpl包含cc::PictureLayer,所以设置给LayerTreeHost的是cc::PictureLayer的实例，保存在LayeTreeHost的成员变量scoped_refptr<Layer> root_layer_中。
+并且这个cc::PictureLayer是在WebKit::RenderLayerCompositor创建OwnPtr<GraphicsLayer> m_rootContentLayer时创建的，被m_rootContentLayer间接包含。
+上述过程是由Document::attach()函数触发的，具体流程在renderwidgetcompositorcreated顺序图中。
+
+
+三，四，五，六中涉及类图如下：
+render_renderwidgetcompositor.jpg
+
+
+
+
+
+
+
+
+
+
+
