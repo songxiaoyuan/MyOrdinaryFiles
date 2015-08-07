@@ -1,0 +1,181 @@
+#0  blink::initialize (platform=0x2dec01f508e0) at ../../third_party/WebKit/Source/web/WebKit.cpp:107
+#1  0x0000000004eb1c44 in content::RenderThreadImpl::EnsureWebKitInitialized (this=0x2dec01f2ac20) at ../../content/renderer/render_thread_impl.cc:965
+#2  0x0000000004eaf998 in content::RenderThreadImpl::Init (this=0x2dec01f2ac20) at ../../content/renderer/render_thread_impl.cc:656
+#3  0x0000000004eb0256 in content::RenderThreadImpl::RenderThreadImpl (this=0x2dec01f2ac20, main_message_loop=...) at ../../content/renderer/render_thread_impl.cc:435
+#4  0x00000000070f79c2 in content::RendererMain (parameters=...) at ../../content/renderer/renderer_main.cc:224
+#5  0x00000000056b6183 in content::RunZygote (main_function_params=..., delegate=0x7fffffffdea0) at ../../content/app/content_main_runner.cc:347
+#6  0x00000000056b653b in content::RunNamedProcessTypeMain (process_type=..., main_function_params=..., delegate=0x7fffffffdea0) at ../../content/app/content_main_runner.cc:431
+#7  0x00000000056b7742 in content::ContentMainRunnerImpl::Run (this=0x2dec01eb5380) at ../../content/app/content_main_runner.cc:800
+#8  0x00000000056b5a75 in content::ContentMain (params=...) at ../../content/app/content_main.cc:19
+#9  0x00000000007edc0c in main (argc=4, argv=0x7fffffffdfd8) at ../../content/nw/src/shell_main.cc:112
+
+这是webkit.cpp中initialize函数的调用关系。
+
+ content::RenderThreadImpl::EnsureWebKitInitialized (this=0x2dec01f2ac20) at ../../content/renderer/render_thread_impl.cc:967
+#1  0x0000000004eaf998 in content::RenderThreadImpl::Init (this=0x2dec01f2ac20) at ../../content/renderer/render_thread_impl.cc:656
+#2  0x0000000004eb0256 in content::RenderThreadImpl::RenderThreadImpl (this=0x2dec01f2ac20, main_message_loop=...) at ../../content/renderer/render_thread_impl.cc:435
+#3  0x00000000070f79c2 in content::RendererMain (parameters=...) at ../../content/renderer/renderer_main.cc:224
+#4  0x00000000056b6183 in content::RunZygote (main_function_params=..., delegate=0x7fffffffdea0) at ../../content/app/content_main_runner.cc:347
+#5  0x00000000056b653b in content::RunNamedProcessTypeMain (process_type=..., main_function_params=..., delegate=0x7fffffffdea0) at ../../content/app/content_main_runner.cc:431
+#6  0x00000000056b7742 in content::ContentMainRunnerImpl::Run (this=0x2dec01eb5380) at ../../content/app/content_main_runner.cc:800
+#7  0x00000000056b5a75 in content::ContentMain (params=...) at ../../content/app/content_main.cc:19
+#8  0x00000000007edc0c in main (argc=4, argv=0x7fffffffdfd8) at ../../content/nw/src/shell_main.cc:112
+
+这个是里面的EnSureWebkitINitialized的调用关系，里面包括了设置UV循环和node的context。
+
+
+
+#0  content::pShellContentRendererClient::InstallNodeSymbols (this=0x2dec01f3c1d0, frame=0x3abccc058010, context=..., url=...) at ../../content/nw/src/renderer/shell_content_renderer_client.cc:345
+#1  0x0000000000831f00 in content::ShellContentRendererClient::DidCreateScriptContext (this=0x2dec01f3c1d0, frame=0x3abccc058010, context=..., extension_group=0, world_id=0)
+    at ../../content/nw/src/renderer/shell_content_renderer_client.cc:236
+#2  0x0000000004e8d9da in content::RenderFrameImpl::didCreateScriptContext (this=0x2dec01f1b020, frame=0x3abccc058010, context=..., extension_group=0, world_id=0) at ../../content/renderer/render_frame_impl.cc:3191
+#3  0x0000000004e8da45 in non-virtual thunk to content::RenderFrameImpl::didCreateScriptContext(blink::WebLocalFrame*, v8::Handle<v8::Context>, int, int) () at ../../content/renderer/render_frame_impl.cc:3193
+#4  0x00000000034e379b in blink::FrameLoaderClientImpl::didCreateScriptContext (this=0x3abccc058068, context=..., extensionGroup=0, worldId=0) at ../../third_party/WebKit/Source/web/FrameLoaderClientImpl.cpp:149
+#5  0x000000000438e997 in blink::WindowProxy::initialize (this=0x2dec02281950) at ../../third_party/WebKit/Source/bindings/core/v8/WindowProxy.cpp:246
+#6  0x000000000438e3d2 in blink::WindowProxy::initializeIfNeeded (this=0x2dec02281950) at ../../third_party/WebKit/Source/bindings/core/v8/WindowProxy.cpp:195
+#7  0x00000000043241ca in blink::ScriptController::windowProxy (this=0x2dec02281e90, world=...) at ../../third_party/WebKit/Source/bindings/core/v8/ScriptController.cpp:223
+#8  0x00000000043534b5 in blink::toV8Context (frame=0x3abccc068310, world=...) at ../../third_party/WebKit/Source/bindings/core/v8/V8Binding.cpp:902
+#9  0x000000000348a5fa in blink::WebLocalFrameImpl::mainWorldScriptContext (this=0x3abccc058010) at ../../third_party/WebKit/Source/web/WebLocalFrameImpl.cpp:864
+#10 0x000000000085134a in nwapi::Dispatcher::documentCallback (this=0x2dec0247fe00, ev=0x7858f53 <.L.str15> "document-start", frame=0x3abccc058010) at ../../content/nw/src/api/dispatcher.cc:178
+#11 0x00000000008512b7 in nwapi::Dispatcher::DidCreateDocumentElement (this=0x2dec0247fe00, frame=0x3abccc058010) at ../../content/nw/src/api/dispatcher.cc:164
+#12 0x0000000004e88053 in content::RenderFrameImpl::didCreateDocumentElement (this=0x2dec01f1b020, frame=0x3abccc058010) at ../../content/renderer/render_frame_impl.cc:2541
+#13 0x0000000004e880cf in non-virtual thunk to content::RenderFrameImpl::didCreateDocumentElement(blink::WebLocalFrame*) () at ../../content/renderer/render_frame_impl.cc:2543
+#14 0x00000000034e36bb in blink::FrameLoaderClientImpl::documentElementAvailable (this=0x3abccc058068) at ../../third_party/WebKit/Source/web/FrameLoaderClientImpl.cpp:140
+#15 0x0000000003d80ff9 in blink::FrameLoader::dispatchDocumentElementAvailable (this=0x3abccc0683c0) at ../../third_party/WebKit/Source/core/loader/FrameLoader.cpp:1423
+#16 0x00000000039f4b57 in blink::HTMLConstructionSite::dispatchDocumentElementAvailableIfNeeded (this=0x3abccc074628) at ../../third_party/WebKit/Source/core/html/parser/HTMLConstructionSite.cpp:394
+#17 0x00000000039f4cdf in blink::HTMLConstructionSite::insertHTMLHtmlStartTagBeforeHTML (this=0x3abccc074628, token=0x7fffffffbb08) at ../../third_party/WebKit/Source/core/html/parser/HTMLConstructionSite.cpp:407
+#18 0x000000000397881e in blink::HTMLTreeBuilder::processStartTag (this=0x3abccc074610, token=0x7fffffffbb08) at ../../third_party/WebKit/Source/core/html/parser/HTMLTreeBuilder.cpp:1076
+#19 0x000000000397846a in blink::HTMLTreeBuilder::processToken (this=0x3abccc074610, token=0x7fffffffbb08) at ../../third_party/WebKit/Source/core/html/parser/HTMLTreeBuilder.cpp:417
+#20 0x000000000397753b in blink::HTMLTreeBuilder::constructTree (this=0x3abccc074610, token=0x7fffffffbb08) at ../../third_party/WebKit/Source/core/html/parser/HTMLTreeBuilder.cpp:377
+#21 0x0000000003948ec1 in blink::HTMLDocumentParser::constructTreeFromCompactHTMLToken (this=0x3abccc11c3d0, compactToken=...) at ../../third_party/WebKit/Source/core/html/parser/HTMLDocumentParser.cpp:670
+#22 0x0000000003948afc in blink::HTMLDocumentParser::processParsedChunkFromBackgroundParser (this=0x3abccc11c3d0, popChunk=...) at ../../third_party/WebKit/Source/core/html/parser/HTMLDocumentParser.cpp:454
+#23 0x0000000003947242 in blink::HTMLDocumentParser::pumpPendingSpeculations (this=0x3abccc11c3d0) at ../../third_party/WebKit/Source/core/html/parser/HTMLDocumentParser.cpp:517
+#24 0x0000000003947a21 in blink::HTMLDocumentParser::didReceiveParsedChunkFromBackgroundParser (this=0x3abccc11c3d0, chunk=...) at ../../third_party/WebKit/Source/core/html/parser/HTMLDocumentParser.cpp:338
+#25 0x00000000039ef787 in WTF::FunctionWrapper<void (blink::HTMLDocumentParser::*)(WTF::PassOwnPtr<blink::HTMLDocumentParser::ParsedChunk>)>::operator() (this=0x3abccc01e5b0, c=..., params=...)
+    at ../../third_party/WebKit/Source/wtf/Functional.h:88
+#26 0x00000000039ef6b7 in WTF::BoundFunctionImpl<WTF::FunctionWrapper<void (blink::HTMLDocumentParser::*)(WTF::PassOwnPtr<blink::HTMLDocumentParser::ParsedChunk>)>, void (WTF::WeakPtr<blink::HTMLDocumentParser>, WTF::PassOwnPtr<blink::HTMLDocumentParser::ParsedChunk>)>::operator()() (this=0x3abccc01e5a0) at ../../third_party/WebKit/Source/wtf/Functional.h:355
+#27 0x00000000031599bb in WTF::Function<void ()>::operator()() const (this=0x2dec02104660) at ../../third_party/WebKit/Source/wtf/Functional.h:513
+#28 0x00000000031598dd in WTF::callFunctionObject (context=0x2dec02104660) at ../../third_party/WebKit/Source/wtf/MainThread.cpp:65
+#29 0x000000000096882d in base::internal::RunnableAdapter<void (*)(void*)>::Run (this=0x7fffffffbf48, args=@0x2dec0247f6f8: 0x2dec02104660) at ../../base/bind_internal.h:166
+#30 0x00000000009687f5 in base::internal::InvokeHelper<false, void, base::internal::RunnableAdapter<void (*)(void*)>, void (void* const&)>::MakeItSo(base::internal::RunnableAdapter<void (*)(void*)>, void* const&) (runnable=..., 
+    args=@0x2dec0247f6f8: 0x2dec02104660) at ../../base/bind_internal.h:381
+#31 0x00000000009687c9 in base::internal::Invoker<1, base::internal::BindState<base::internal::RunnableAdapter<void (*)(void*)>, void (void*), void (void*)>, void (void*)>::Run(base::internal::BindStateBase*) (base=0x2dec0247f6e0)
+    at ../../base/bind_internal.h:475
+#32 0x00000000007f637e in base::Callback<void ()>::Run() const (this=0x7fffffffc180) at ../../base/callback.h:396
+#33 0x0000000000a4c9d9 in base::debug::TaskAnnotator::RunTask (this=0x2dec0222ed7c, queue_function=0x8143de7 <.L.str17> "TaskQueueManager::PostTask", run_function=0x8143e02 <.L.str18> "TaskQueueManager::RunTask", pending_task=...)
+    at ../../base/debug/task_annotator.cc:63
+#34 0x0000000004f2530e in content::TaskQueueManager::ProcessTaskFromWorkQueue (this=0x2dec0222ed40, queue_index=0) at ../../content/renderer/scheduler/task_queue_manager.cc:368
+#35 0x0000000004f250a5 in content::TaskQueueManager::DoWork (this=0x2dec0222ed40, posted_from_main_thread=false) at ../../content/renderer/scheduler/task_queue_manager.cc:342
+#36 0x000000000137511f in base::internal::RunnableAdapter<void (content::DownloadItemImpl::*)(bool)>::Run (this=0x7fffffffc420, object=0x2dec0222ed40, args=@0x2dec022813d0: false) at ../../base/bind_internal.h:185
+#37 0x0000000001375088 in base::internal::InvokeHelper<true, void, base::internal::RunnableAdapter<void (content::DownloadItemImpl::*)(bool)>, void (base::WeakPtr<content::DownloadItemImpl> const&, bool const&)>::MakeItSo(base::internal::RunnableAdapter<void (content::DownloadItemImpl::*)(bool)>, base::WeakPtr<content::DownloadItemImpl> const&, bool const&) (runnable=..., weak_ptr=..., args=@0x2dec022813d0: false) at ../../base/bind_internal.h:391
+#38 0x0000000004f26ddc in base::internal::Invoker<2, base::internal::BindState<base::internal::RunnableAdapter<void (content::TaskQueueManager::*)(bool)>, void (content::TaskQueueManager*, bool), void (base::WeakPtr<content::TaskQueueManager>, bool)>, void (content::TaskQueueManager*, bool)>::Run(base::internal::BindStateBase*) (base=0x2dec022813a0) at ../../base/bind_internal.h:557
+#39 0x00000000007f637e in base::Callback<void ()>::Run() const (this=0x7fffffffca48) at ../../base/callback.h:396
+---Type <return> to continue, or q <return> to quit---
+#40 0x0000000000a4c9d9 in base::debug::TaskAnnotator::RunTask (this=0x2dec01eabf88, queue_function=0x78671df <.L.str5> "MessageLoop::PostTask", run_function=0x78671f5 <.L.str14> "MessageLoop::RunTask", pending_task=...)
+    at ../../base/debug/task_annotator.cc:63
+#41 0x000000000099d9a8 in base::MessageLoop::RunTask (this=0x2dec01eabda0, pending_task=...) at ../../base/message_loop/message_loop.cc:446
+#42 0x000000000099db0b in base::MessageLoop::DeferOrRunPendingTask (this=0x2dec01eabda0, pending_task=...) at ../../base/message_loop/message_loop.cc:456
+#43 0x000000000099dcf5 in base::MessageLoop::DoWork (this=0x2dec01eabda0) at ../../base/message_loop/message_loop.cc:564
+#44 0x0000000000a3d29a in base::MessagePumpUV::Run (this=0x2dec01eb6ab0, delegate=0x2dec01eabda0) at ../../base/message_pump_uv.cc:75
+#45 0x000000000099d472 in base::MessageLoop::RunHandler (this=0x2dec01eabda0) at ../../base/message_loop/message_loop.cc:415
+#46 0x00000000009cd444 in base::RunLoop::Run (this=0x7fffffffd140) at ../../base/run_loop.cc:55
+#47 0x000000000099cbb1 in base::MessageLoop::Run (this=0x2dec01eabda0) at ../../base/message_loop/message_loop.cc:308
+#48 0x00000000070f7a18 in content::RendererMain (parameters=...) at ../../content/renderer/renderer_main.cc:237
+#49 0x00000000056b6183 in content::RunZygote (main_function_params=..., delegate=0x7fffffffdea0) at ../../content/app/content_main_runner.cc:347
+#50 0x00000000056b653b in content::RunNamedProcessTypeMain (process_type=..., main_function_params=..., delegate=0x7fffffffdea0) at ../../content/app/content_main_runner.cc:431
+#51 0x00000000056b7742 in content::ContentMainRunnerImpl::Run (this=0x2dec01eb5380) at ../../content/app/content_main_runner.cc:800
+#52 0x00000000056b5a75 in content::ContentMain (params=...) at ../../content/app/content_main.cc:19
+#53 0x00000000007edc0c in main (argc=4, argv=0x7fffffffdfd8) at ../../content/nw/src/shell_main.cc:112
+这是那个chromium中context的创建过程，里面就包括了把node的东西放入到chromium中。
+
+
+
+zygote and render
+content::Zygote::ReadArgsAndFork (this=0x7fffffffcda0, iter=..., fds=..., uma_name=0x7fffffff9780, uma_sample=0x7fffffff977c, uma_boundary_value=0x7fffffff9778) at ../../content/zygote/zygote_linux.cc:523
+#1  0x0000000001b4833c in content::Zygote::HandleForkRequest (this=0x7fffffffcda0, fd=3, iter=..., fds=...) at ../../content/zygote/zygote_linux.cc:557
+#2  0x0000000001b47bc7 in content::Zygote::HandleRequestFromBrowser (this=0x7fffffffcda0, fd=3) at ../../content/zygote/zygote_linux.cc:192
+#3  0x0000000001b4747f in content::Zygote::ProcessRequests (this=0x7fffffffcda0) at ../../content/zygote/zygote_linux.cc:132
+#4  0x00000000016cedd7 in content::ZygoteMain (params=..., fork_delegates=...) at ../../content/zygote/zygote_main_linux.cc:648
+#5  0x00000000056b5fff in content::RunZygote (main_function_params=..., delegate=0x7fffffffdea0) at ../../content/app/content_main_runner.cc:324
+#6  0x00000000056b653b in content::RunNamedProcessTypeMain (process_type=..., main_function_params=..., delegate=0x7fffffffdea0) at ../../content/app/content_main_runner.cc:431
+#7  0x00000000056b7742 in content::ContentMainRunnerImpl::Run (this=0xe4575f7a380) at ../../content/app/content_main_runner.cc:800
+#8  0x00000000056b5a75 in content::ContentMain (params=...) at ../../content/app/content_main.cc:19
+#9  0x00000000007edc0c in main (argc=4, argv=0x7fffffffdfd8) at ../../content/nw/src/shell_main.cc:112
+
+
+render thread started
+#0  content::ShellContentRendererClient::RenderThreadStarted (this=0x3933b77f11d0) at ../../content/nw/src/renderer/shell_content_renderer_client.cc:167
+#1  0x0000000004eaeb92 in content::RenderThreadImpl::Init (this=0x3933b77dfc20) at ../../content/renderer/render_thread_impl.cc:518
+#2  0x0000000004eb0256 in content::RenderThreadImpl::RenderThreadImpl (this=0x3933b77dfc20, main_message_loop=...) at ../../content/renderer/render_thread_impl.cc:435
+#3  0x00000000070f79c2 in content::RendererMain (parameters=...) at ../../content/renderer/renderer_main.cc:224
+#4  0x00000000056b6183 in content::RunZygote (main_function_params=..., delegate=0x7fffffffdf30) at ../../content/app/content_main_runner.cc:347
+#5  0x00000000056b653b in content::RunNamedProcessTypeMain (process_type=..., main_function_params=..., delegate=0x7fffffffdf30) at ../../content/app/content_main_runner.cc:431
+#6  0x00000000056b7742 in content::ContentMainRunnerImpl::Run (this=0x3933b777b380) at ../../content/app/content_main_runner.cc:800
+#7  0x00000000056b5a75 in content::ContentMain (params=...) at ../../content/app/content_main.cc:19
+#8  0x00000000007edc0c in main (argc=4, argv=0x7fffffffe068) at ../../content/nw/src/shell_main.cc:112
+
+blink initialize
+0  blink::initialize (platform=0x3933b78008e0) at ../../third_party/WebKit/Source/web/WebKit.cpp:107
+#1  0x0000000004eb1c44 in content::RenderThreadImpl::EnsureWebKitInitialized (this=0x3933b77dfc20) at ../../content/renderer/render_thread_impl.cc:965
+#2  0x0000000004eaf998 in content::RenderThreadImpl::Init (this=0x3933b77dfc20) at ../../content/renderer/render_thread_impl.cc:656
+#3  0x0000000004eb0256 in content::RenderThreadImpl::RenderThreadImpl (this=0x3933b77dfc20, main_message_loop=...) at ../../content/renderer/render_thread_impl.cc:435
+#4  0x00000000070f79c2 in content::RendererMain (parameters=...) at ../../content/renderer/renderer_main.cc:224
+#5  0x00000000056b6183 in content::RunZygote (main_function_params=..., delegate=0x7fffffffdf30) at ../../content/app/content_main_runner.cc:347
+#6  0x00000000056b653b in content::RunNamedProcessTypeMain (process_type=..., main_function_params=..., delegate=0x7fffffffdf30) at ../../content/app/content_main_runner.cc:431
+#7  0x00000000056b7742 in content::ContentMainRunnerImpl::Run (this=0x3933b777b380) at ../../content/app/content_main_runner.cc:800
+#8  0x00000000056b5a75 in content::ContentMain (params=...) at ../../content/app/content_main.cc:19
+#9  0x00000000007edc0c in main (argc=4, argv=0x7fffffffe068) at ../../content/nw/src/shell_main.cc:112
+
+chromium zhong de shell_content_render_client
+#0  content::ShellContentRendererClient::ShellContentRendererClient (this=0x1cdb4b5b53e0) at ../../content/shell/renderer/shell_content_renderer_client.cc:17
+#1  0x000000000043703e in content::ShellMainDelegate::CreateContentRendererClient (this=0x7fffffffdfb0) at ../../content/shell/app/shell_main_delegate.cc:327
+#2  0x0000000000531954 in content::ContentClientInitializer::Set (process_type=..., delegate=0x7fffffffdfb0) at ../../content/app/content_main_runner.cc:272
+#3  0x0000000000530ec1 in content::RunZygote (main_function_params=..., delegate=0x7fffffffdfb0) at ../../content/app/content_main_runner.cc:335
+#4  0x000000000053130b in content::RunNamedProcessTypeMain (process_type=..., main_function_params=..., delegate=0x7fffffffdfb0) at ../../content/app/content_main_runner.cc:431
+#5  0x0000000000533782 in content::ContentMainRunnerImpl::Run (this=0x1cdb4b547380) at ../../content/app/content_main_runner.cc:800
+#6  0x0000000000530845 in content::ContentMain (params=...) at ../../content/app/content_main.cc:19
+#7  0x0000000000435dbc in main (argc=2, argv=0x7fffffffe0e8) at ../../content/shell/app/shell_main.cc:49
+
+
+chromium nei de didCreateScriptContext
+
+Current source file is ../../content/public/renderer/content_renderer_client.h
+Compilation directory is /media/sxy/data1/chromium-android/chromium/src/out/Debug
+Located in /media/sxy/data1/chromium-android/chromium/src/content/public/renderer/content_renderer_client.h
+Contains 302 lines.
+Source language is c++.
+Compiled with (null) debugging format.
+Does not include preprocessor macro info.
+
+#0  content::RenderFrameImpl::didCreateScriptContext (this=0x4f30f697420, frame=0x21f0fbe4c010, context=..., extension_group=0, world_id=0) at ../../content/renderer/render_frame_impl.cc:3184
+#1  0x00000000044a62d5 in non-virtual thunk to content::RenderFrameImpl::didCreateScriptContext(blink::WebLocalFrame*, v8::Handle<v8::Context>, int, int) () at ../../content/renderer/render_frame_impl.cc:3187
+#2  0x00000000020b74ab in blink::FrameLoaderClientImpl::didCreateScriptContext (this=0x21f0fbe4c068, context=..., extensionGroup=0, worldId=0) at ../../third_party/WebKit/Source/web/FrameLoaderClientImpl.cpp:149
+#3  0x0000000002f55f37 in blink::WindowProxy::initialize (this=0x4f30f87b170) at ../../third_party/WebKit/Source/bindings/core/v8/WindowProxy.cpp:246
+#4  0x0000000002f55972 in blink::WindowProxy::initializeIfNeeded (this=0x4f30f87b170) at ../../third_party/WebKit/Source/bindings/core/v8/WindowProxy.cpp:195
+#5  0x0000000002eed2fa in blink::ScriptController::windowProxy (this=0x4f30f6cd250, world=...) at ../../third_party/WebKit/Source/bindings/core/v8/ScriptController.cpp:221
+#6  0x0000000002f1b905 in blink::toV8Context (frame=0x21f0fbe5c310, world=...) at ../../third_party/WebKit/Source/bindings/core/v8/V8Binding.cpp:863
+#7  0x0000000002eeedcd in blink::ScriptController::evaluateScriptInMainWorld (this=0x4f30f6cd250, sourceCode=..., corsStatus=blink::SharableCrossOrigin, policy=blink::ScriptController::DoNotExecuteScriptWhenScriptsDisabled, 
+    compilationFinishTime=0x0) at ../../third_party/WebKit/Source/bindings/core/v8/ScriptController.cpp:560
+#8  0x0000000002eef1ec in blink::ScriptController::executeScriptInMainWorld (this=0x4f30f6cd250, sourceCode=..., corsStatus=blink::SharableCrossOrigin, compilationFinishTime=0x0)
+    at ../../third_party/WebKit/Source/bindings/core/v8/ScriptController.cpp:542
+#9  0x0000000002282afb in blink::ScriptLoader::executeScript (this=0x4f30f6bc5c0, sourceCode=..., compilationFinishTime=0x0) at ../../third_party/WebKit/Source/core/dom/ScriptLoader.cpp:371
+#10 0x00000000022812a6 in blink::ScriptLoader::prepareScript (this=0x4f30f6bc5c0, scriptStartPosition=..., supportLegacyTypes=blink::ScriptLoader::DisallowLegacyTypeInTypeAttribute)
+    at ../../third_party/WebKit/Source/core/dom/ScriptLoader.cpp:267
+#11 0x000000000252cd80 in blink::HTMLScriptRunner::runScript (this=0x21f0fbe99330, script=0x368234e58010, scriptStartPosition=...) at ../../third_party/WebKit/Source/core/html/parser/HTMLScriptRunner.cpp:348
+#12 0x000000000252cab4 in blink::HTMLScriptRunner::execute (this=0x21f0fbe99330, scriptElement=..., scriptStartPosition=...) at ../../third_party/WebKit/Source/core/html/parser/HTMLScriptRunner.cpp:210
+#13 0x0000000002515598 in blink::HTMLDocumentParser::runScriptsForPausedTreeBuilder (this=0x21f0fbf1c3d0) at ../../third_party/WebKit/Source/core/html/parser/HTMLDocumentParser.cpp:286
+#14 0x0000000002516af9 in blink::HTMLDocumentParser::processParsedChunkFromBackgroundParser (this=0x21f0fbf1c3d0, popChunk=...) at ../../third_party/WebKit/Source/core/html/parser/HTMLDocumentParser.cpp:461
+#15 0x0000000002515182 in blink::HTMLDocumentParser::pumpPendingSpeculations (this=0x21f0fbf1c3d0) at ../../third_party/WebKit/Source/core/html/parser/HTMLDocumentParser.cpp:517
+#16 0x0000000002515961 in blink::HTMLDocumentParser::didReceiveParsedChunkFromBackgroundParser (this=0x21f0fbf1c3d0, chunk=...) at ../../third_party/WebKit/Source/core/html/parser/HTMLDocumentParser.cpp:338
+#17 0x00000000025bd4d7 in WTF::FunctionWrapper<void (blink::HTMLDocumentParser::*)(WTF::PassOwnPtr<blink::HTMLDocumentParser::ParsedChunk>)>::operator() (this=0x21f0fbe0a740, c=..., params=...)
+    at ../../third_party/WebKit/Source/wtf/Functional.h:88
+#18 0x00000000025bd407 in WTF::BoundFunctionImpl<WTF::FunctionWrapper<void (blink::HTMLDocumentParser::*)(WTF::PassOwnPtr<blink::HTMLDocumentParser::ParsedChunk>)>, void (WTF::WeakPtr<blink::HTMLDocumentParser>, WTF::PassOwnPtr<blink::HTMLDocumentParser::ParsedChunk>)>::operator()() (this=0x21f0fbe0a730) at ../../third_party/WebKit/Source/wtf/Functional.h:355
+#19 0x0000000001d9d8db in WTF::Function<void ()>::operator()() const (this=0x4f30f6d0f20) at ../../third_party/WebKit/Source/wtf/Functional.h:513
+#20 0x0000000001d9d7fd in WTF::callFunctionObject (context=0x4f30f6d0f20) at ../../third_party/WebKit/Source/wtf/MainThread.cpp:65
+#21 0x000000000070287d in base::internal::RunnableAdapter<void (*)(void*)>::Run (this=0x7fffffffc058, args=@0x4f30f6c2998: 0x4f30f6d0f20) at ../../base/bind_internal.h:166
+#22 0x0000000000702845 in base::internal::InvokeHelper<false, void, base::internal::RunnableAdapter<void (*)(void*)>, void (void* const&)>::MakeItSo(base::internal::RunnableAdapter<void (*)(void*)>, void* const&) (runnable=..., 
+    args=@0x4f30f6c2998: 0x4f30f6d0f20) at ../../base/bind_internal.h:381
+#23 0x0000000000702819 in base::internal::Invoker<1, base::internal::BindState<base::internal::RunnableAdapter<void (*)(void*)>, void (void*), void (void*)>, void (void*)>::Run(base::internal::BindStateBase*) (base=0x4f30f6c2980)
+    at ../../base/bind_internal.h:475
+
+

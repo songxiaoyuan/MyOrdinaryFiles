@@ -1,0 +1,36 @@
+1. browser 进程加断点
+      b content::ZygoteHostImpl::ForkRequest  // browser process
+  r后执行到断点后，zygote进程已经创建
+然后pstree -ap | grep nw找到zygote进程
+在shell中su进入root用户，运行gdb，然后attach到zygote进程id
+ 
+2. zygote进程加断点
+    2.1 b content::Zygote::ForkWithRealPid // zygote process
+    2.2 b zygote_linux.cc:377 // zygote process    sandbox::ForkWithFlags
+zygote进程，c 继续运行
+然后c browser 进程，zygote进程断点停在2.1，在zygote进程中继续c，停在2.2,然后n，此时render进程创建
+然后pstree -ap | grep nw找到render进程。
+在shell中su进入root用户，运行gdb，然后attach到render进程id
+ 
+3. render进程加断点
+3.1 b content::RendererMain // render process
+c继续运行
+然后然后c zygote 进程，然后zygote进程断点停在3.1。然后继续加render进程断点
+
+render 
+b renderer_main.cc:224
+b content::RenderThreadImpl::Init
+
+b blink::initialize
+b content::ShellContentRendererClient::RenderViewCreated
+b content::ShellContentRendererClient::InstallNodeSymbols
+b node::SetupUv
+b node::SetupContext
+b content::ShellContentRendererClient::ShellContentRendererClient
+b content::ShellContentRendererClient::RenderThreadStarted
+b content::RenderFrameImpl::didCreateScriptContext
+b content::ShellContentRendererClient::WillSetSecurityToken
+b content::ShellContentRendererClient::DidCreateScriptContext
+b blink::FrameLoaderClientImpl::didCreateScriptContext
+
+file:///media/sxy/data1/chromium-android/chromium/src/out/Debug/test.html
